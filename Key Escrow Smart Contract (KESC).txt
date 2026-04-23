@@ -1,0 +1,90 @@
+solidity
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.17;
+import "./RegistrationSmartContract.sol";
+
+/**
+ * @title KeyEscrowSmartContract (KESC)
+ * @dev Implements secure key escrow and recovery with multi-factor authentication (MFA)
+ */
+contract KeyEscrowSmartContract {
+    // Reference to the Registration Smart Contract
+    RegistrationSmartContract public rsc;
+    
+    // Mapping: Data source ID -> Encrypted private key (bytes)
+    mapping(string => bytes) public encryptedPrivateKey;
+    // Mapping: Data source ID -> MFA verification status (bool)
+    mapping(string => bool) public mfaVerified;
+    // Mapping: Data source ID -> Key recovery timestamp (uint256)
+    mapping(string => uint256) public lastRecoveryTimestamp;
+    
+    // Event emitted when a private key is successfully escrowed
+    event KeyEscrowed(string indexed dataSourceId, uint256 timestamp);
+    // Event emitted when a private key is successfully recovered
+    event KeyRecovered(string indexed dataSourceId, uint256 timestamp);
+    
+    /**
+     * @dev Constructor: Initialize the KESC with a reference to the RSC
+     * @param rscAddress Address of the deployed RegistrationSmartContract
+     */
+    constructor(address rscAddress) {
+        rsc = RegistrationSmartContract(rscAddress);
+    }
+    
+    /**
+     * @dev Escrow the encrypted private key of a registered data source
+     * @param dataSourceId Unique identifier of the data source
+     * @param encryptedPrivKey Encrypted private key (encrypted with K_C, the custodian key)
+     */
+    function escrowKey(string calldata dataSourceId, bytes calldata encryptedPrivKey) external {
+        // Ensure the data source is registered in RSC
+        require(bytes(rsc.getPublicKey(dataSourceId)).length != 0, "Data source not registered");
+        // Ensure the encrypted private key is not empty
+        require(encryptedPrivKey.length > 0, "Encrypted private key cannot be empty");
+        
+        encryptedPrivateKey[dataSourceId] = encryptedPrivKey;
+        emit KeyEscrowed(dataSourceId, block.timestamp);
+    }
+    
+    /**
+     * @dev Verify MFA for key recovery (simulated, to be integrated with off-chain MFA services)
+     * @param dataSourceId Unique identifier of the data source
+     * @param mfaCode Simulated MFA code (for experimental purposes)
+     */
+    function verifyMFA(string calldata dataSourceId, uint256 mfaCode) external {
+        // Simulated MFA verification (replace with real off-chain MFA in production)
+        // For experiments, MFA code is set to 123456 (configurable)
+        require(mfaCode == 123456, "Invalid MFA code");
+        mfaVerified[dataSourceId] = true;
+    }
+    
+    /**
+     * @dev Recover the encrypted private key after successful MFA verification
+     * @param dataSourceId Unique identifier of the data source
+     * @return Encrypted private key (bytes)
+     */
+    function recoverKey(string calldata dataSourceId) external returns (bytes memory) {
+        // Ensure the data source is registered in RSC
+        require(bytes(rsc.getPublicKey(dataSourceId)).length != 0, "Data source not registered");
+        // Ensure MFA is verified
+        require(mfaVerified[dataSourceId], "MFA not verified");
+        // Ensure the private key is escrowed
+        require(encryptedPrivateKey[dataSourceId].length > 0, "No escrowed private key");
+        
+        // Update recovery timestamp and reset MFA status
+        lastRecoveryTimestamp[dataSourceId] = block.timestamp;
+        mfaVerified[dataSourceId] = false;
+        
+        emit KeyRecovered(dataSourceId, block.timestamp);
+        return encryptedPrivateKey[dataSourceId];
+    }
+    
+    /**
+     * @dev Check if a data source has an escrowed private key
+     * @param dataSourceId Unique identifier of the data source
+     * @return True if the key is escrowed, false otherwise
+     */
+    function hasEscrowedKey(string calldata dataSourceId) external view returns (bool) {
+        return encryptedPrivateKey[dataSourceId].length > 0;
+    }
+}
