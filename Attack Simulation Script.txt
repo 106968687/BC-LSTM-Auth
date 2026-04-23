@@ -1,0 +1,130 @@
+python
+import numpy as np
+import pandas as pd
+import time
+from lstm_behavioral_trust_model import LSTMBehavioralTrustModel
+from blockchain_interaction import BlockchainInteraction
+
+class AttackSimulator:
+    def __init__(self, lstm_model_path, rpc_url, rsc_address, kesc_address, rsc_abi_path, kesc_abi_path):
+        """
+        Initialize attack simulation module
+        :param lstm_model_path: Path to trained LSTM model
+        :param rpc_url: Ethereum RPC URL
+        :param rsc_address: Deployed RSC address
+        :param kesc_address: Deployed KESC address
+        :param rsc_abi_path: Path to RSC ABI JSON
+        :param kesc_abi_path: Path to KESC ABI JSON
+        """
+        # Load LSTM model
+        self.lstm_model = LSTMBehavioralTrustModel()
+        self.lstm_model.load_model(lstm_model_path)
+        
+        # Initialize blockchain interaction
+        self.bc_interaction = BlockchainInteraction(rpc_url, rsc_address, kesc_address, rsc_abi_path, kesc_abi_path)
+        
+        # Load normal behavioral data (for mimicry)
+        self.normal_data = pd.read_csv('normal_behavioral_data.csv')
+    
+    def simulate_identity_spoofing(self, legitimate_id, fake_public_key, num_attempts=100):
+        """
+        Simulate identity spoofing attack: impersonate a legitimate data source with a fake public key
+        :param legitimate_id: Legitimate data source ID
+        :param fake_public_key: Fake public key (hex string)
+        :param num_attempts: Number of attack attempts
+        :return: Attack success rate, average verification latency
+        """
+        success_count = 0
+        latency_list = []
+        
+        for _ in range(num_attempts):
+            latency, is_valid = self.bc_interaction.measure_signature_verification_latency(legitimate_id, fake_public_key)
+            latency_list.append(latency)
+            if is_valid:
+                success_count += 1
+        
+        success_rate = (success_count / num_attempts) * 100
+        avg_latency = np.mean(latency_list)
+        return success_rate, avg_latency
+    
+    def simulate_key_compromise(self, legitimate_id, legitimate_public_key, num_attempts=100):
+        """
+        Simulate key compromise attack: use a legitimate public key but inject anomalous behavior
+        :param legitimate_id: Legitimate data source ID
+        :param legitimate_public_key: Legitimate public key (hex string)
+        :param num_attempts: Number of attack attempts
+        :return: Attack success rate, average LSTM anomaly score
+        """
+        success_count = 0
+        anomaly_scores = []
+        
+        for _ in range(num_attempts):
+            # Generate anomalous behavioral data (alter location and signature frequency)
+            anomalous_data = self.normal_data.sample(n=10).copy()
+            anomalous_data['loc_hash'] = np.random.randint(1000, 9999, size=10)  # Sudden location change
+            anomalous_data['frequency'] = anomalous_data['frequency'] * 3  # Abnormal signature frequency
+            anomalous_data['label'] = 1  # Label as anomalous
+            
+            # Predict anomaly score with LSTM
+            predictions, _ = self.lstm_model.predict(anomalous_data)
+            avg_anomaly_score = np.mean(predictions)
+            anomaly_scores.append(avg_anomaly_score)
+            
+            # Verify identity (cryptographically valid) and check LSTM score
+            _, is_crypto_valid = self.bc_interaction.measure_signature_verification_latency(legitimate_id, legitimate_public_key)
+            if is_crypto_valid and avg_anomaly_score < 0.5:  # LSTM fails to detect anomaly
+                success_count += 1
+        
+        success_rate = (success_count / num_attempts) * 100
+        avg_anomaly_score = np.mean(anomaly_scores)
+        return success_rate, avg_anomaly_score
+    
+    def simulate_brute_force_attack(self, data_source_id, num_attempts=1000):
+        """
+        Simulate brute-force attack: guess MFA code for key recovery
+        :param data_source_id: Data source ID
+        :param num_attempts: Number of brute-force attempts
+        :return: Attack success rate, average attempt latency
+        """
+        success_count = 0
+        latency_list = []
+        
+        for _ in range(num_attempts):
+            # Generate random MFA code (1-999999)
+            fake_mfa = np.random.randint(1, 1000000)
+            start_time = time.time()
+            
+            try:
+                # Attempt key recovery with fake MFA
+                self.bc_interaction.kesc.functions.verifyMFA(data_source_id, fake_mfa).call()
+                success_count += 1
+            except:
+                pass
+            
+            latency = (time.time() - start_time) * 1000
+            latency_list.append(latency)
+        
+        success_rate = (success_count / num_attempts) * 100
+        avg_latency = np.mean(latency_list)
+        return success_rate, avg_latency
+
+# Example usage
+if __name__ == "__main__":
+    # Configuration
+    LSTM_MODEL_PATH = "lstm_behavioral_trust_model.h5"
+    RPC_URL = "http://localhost:8545"
+    RSC_ADDRESS = "0x1234567890abcdef1234567890abcdef12345678"
+    KESC_ADDRESS = "0xabcdef1234567890abcdef1234567890abcdef12"
+    RSC_ABI_PATH = "rsc_abi.json"
+    KESC_ABI_PATH = "kesc_abi.json"
+    
+    # Initialize attack simulator
+    attack_sim = AttackSimulator(LSTM_MODEL_PATH, RPC_URL, RSC_ADDRESS, KESC_ADDRESS, RSC_ABI_PATH, KESC_ABI_PATH)
+    
+    # Simulate identity spoofing attack
+    spoof_success_rate, spoof_latency = attack_sim.simulate_identity_spoofing("DS_001", "0xffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100", 100)
+    print(f"Identity Spoofing Attack: Success Rate = {spoof_success_rate:.2f}%, Avg Latency = {spoof_latency:.2f} ms")
+    
+    # Simulate key compromise attack
+    compromise_success_rate, avg_anomaly = attack_sim.simulate_key_compromise("DS_001", "0x00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff", 100)
+    print(f"Key Compromise Attack: Success Rate = {compromise_success_rate:.2f}%, Avg Anomaly Score = {avg_anomaly:.4f}")
