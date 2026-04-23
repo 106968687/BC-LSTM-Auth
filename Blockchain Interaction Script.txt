@@ -1,0 +1,125 @@
+python
+from web3 import Web3
+import json
+import time
+
+class BlockchainInteraction:
+    def __init__(self, rpc_url, rsc_address, kesc_address, rsc_abi_path, kesc_abi_path):
+        """
+        Initialize blockchain interaction module
+        :param rpc_url: Ethereum RPC URL (e.g., http://localhost:8545 for Geth testnet)
+        :param rsc_address: Deployed RSC contract address
+        :param kesc_address: Deployed KESC contract address
+        :param rsc_abi_path: Path to RSC ABI JSON file
+        :param kesc_abi_path: Path to KESC ABI JSON file
+        """
+        self.web3 = Web3(Web3.HTTPProvider(rpc_url))
+        assert self.web3.is_connected(), "Failed to connect to blockchain network"
+        
+        # Load contract ABIs
+        with open(rsc_abi_path, 'r') as f:
+            self.rsc_abi = json.load(f)
+        with open(kesc_abi_path, 'r') as f:
+            self.kesc_abi = json.load(f)
+        
+        # Initialize contract instances
+        self.rsc = self.web3.eth.contract(address=rsc_address, abi=self.rsc_abi)
+        self.kesc = self.web3.eth.contract(address=kesc_address, abi=self.kesc_abi)
+        
+        # Set default account (for transaction signing; use a test account with ETH)
+        self.web3.eth.default_account = self.web3.eth.accounts[0]
+    
+    def register_data_source(self, data_source_id, public_key):
+        """
+        Register a data source in RSC
+        :param data_source_id: Unique ID of the data source
+        :param public_key: 256-bit ECC public key (hex string)
+        :return: Transaction hash and registration timestamp
+        """
+        # Convert public key to bytes256
+        public_key_bytes = self.web3.to_bytes(hexstr=public_key)
+        assert len(public_key_bytes) == 32, "Public key must be 256 bits (32 bytes)"
+        
+        # Send registration transaction
+        tx_hash = self.rsc.functions.register(data_source_id, public_key_bytes).transact()
+        # Wait for transaction confirmation
+        tx_receipt = self.web3.eth.wait_for_transaction_receipt(tx_hash)
+        timestamp = self.rsc.functions.registrationTimestamp(data_source_id).call()
+        
+        return tx_hash.hex(), timestamp
+    
+    def verify_identity(self, data_source_id, public_key):
+        """
+        Verify ID-PK binding in RSC
+        :param data_source_id: Data source ID
+        :param public_key: 256-bit ECC public key (hex string)
+        :return: True if valid, False otherwise
+        """
+        public_key_bytes = self.web3.to_bytes(hexstr=public_key)
+        return self.rsc.functions.verifyIdentity(data_source_id, public_key_bytes).call()
+    
+    def escrow_private_key(self, data_source_id, encrypted_priv_key):
+        """
+        Escrow encrypted private key in KESC
+        :param data_source_id: Data source ID
+        :param encrypted_priv_key: Encrypted private key (hex string)
+        :return: Transaction hash
+        """
+        encrypted_priv_key_bytes = self.web3.to_bytes(hexstr=encrypted_priv_key)
+        tx_hash = self.kesc.functions.escrowKey(data_source_id, encrypted_priv_key_bytes).transact()
+        self.web3.eth.wait_for_transaction_receipt(tx_hash)
+        return tx_hash.hex()
+    
+    def recover_private_key(self, data_source_id, mfa_code=123456):
+        """
+        Recover escrowed private key from KESC (after MFA verification)
+        :param data_source_id: Data source ID
+        :param mfa_code: Simulated MFA code (default: 123456)
+        :return: Encrypted private key (hex string) and recovery time
+        """
+        # Verify MFA
+        tx_hash_mfa = self.kesc.functions.verifyMFA(data_source_id, mfa_code).transact()
+        self.web3.eth.wait_for_transaction_receipt(tx_hash_mfa)
+        
+        # Record start time for recovery time measurement
+        start_time = time.time()
+        
+        # Recover key
+        encrypted_priv_key_bytes = self.kesc.functions.recoverKey(data_source_id).call()
+        recovery_time = (time.time() - start_time) * 1000  # Convert to milliseconds
+        
+        return self.web3.to_hex(encrypted_priv_key_bytes), recovery_time
+    
+    def measure_signature_verification_latency(self, data_source_id, public_key):
+        """
+        Measure the latency of signature verification (blockchain + cryptographic check)
+        :param data_source_id: Data source ID
+        :param public_key: 256-bit ECC public key (hex string)
+        :return: Verification latency (milliseconds)
+        """
+        start_time = time.time()
+        # Simulate signature verification: check ID-PK binding (blockchain) + ECDSA check (off-chain)
+        is_valid = self.verify_identity(data_source_id, public_key)
+        # Simulate ECDSA verification (off-chain, simplified)
+        ecdsa_verification = True  # Replace with actual ECDSA verification in production
+        latency = (time.time() - start_time) * 1000
+        
+        return latency, is_valid and ecdsa_verification
+
+# Example usage
+if __name__ == "__main__":
+    # Configuration
+    RPC_URL = "http://localhost:8545"
+    RSC_ADDRESS = "0x1234567890abcdef1234567890abcdef12345678"  # Replace with deployed RSC address
+    KESC_ADDRESS = "0xabcdef1234567890abcdef1234567890abcdef12"  # Replace with deployed KESC address
+    RSC_ABI_PATH = "rsc_abi.json"
+    KESC_ABI_PATH = "kesc_abi.json"
+    
+    # Initialize blockchain interaction
+    bc_interaction = BlockchainInteraction(RPC_URL, RSC_ADDRESS, KESC_ADDRESS, RSC_ABI_PATH, KESC_ABI_PATH)
+    
+    # Example: Register a data source
+    data_source_id = "DS_001"
+    public_key = "0x00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
+    tx_hash, timestamp = bc_interaction.register_data_source(data_source_id, public_key)
+    print(f"Registered data source {data_source_id}, tx hash: {tx_hash}, timestamp: {timestamp}")
